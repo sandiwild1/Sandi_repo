@@ -1,0 +1,95 @@
+import pandas as pd
+import numpy as np
+import datetime
+import ssl
+import yfinance as yf
+from pandas.tseries.offsets import BDay
+from sklearn.ensemble import RandomForestRegressor
+
+# Suppress SSL certificate verification warnings
+ssl._create_default_https_context = ssl._create_unverified_context
+
+def calculate_rsi(prices: pd.Series, window: int = 14) -> pd.Series:
+    """Calculate Relative Strength Index (RSI) for a price series."""
+    delta = prices.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def find_highest_expected_gain(tickers, start_date):
+    """
+    Scans the given tickers, trains a RandomForest model per ticker,
+    predicts next-trading-day close, and returns the ticker whose
+    predicted close minus today's open is largest.
+    """
+    # 1) Download price history through today by setting end_date = tomorrow
+    today = datetime.date.today()
+    end_date = (today + datetime.timedelta(days=1)).isoformat()
+    raw = yf.download(tickers, start=start_date, end=end_date, progress=False)
+
+    # 2) Flatten multi‐level columns to "Metric_TICKER"
+    if hasattr(raw.columns, "nlevels") and raw.columns.nlevels > 1:
+        raw.columns = [f"{metric}_{ticker}" for metric, ticker in raw.columns]
+
+    # 3) Extract closes and rename to ticker-only
+    close_cols = [c for c in raw.columns if c.startswith("Close_")]
+    close_df = raw[close_cols].copy()
+    close_df.columns = [c.split("_",1)[1] for c in close_df.columns]
+
+    # 4) Compute indicators
+    sma20 = close_df.rolling(window=20).mean().add_prefix("SMA20_")
+    sma50 = close_df.rolling(window=50).mean().add_prefix("SMA50_")
+    rsi   = close_df.apply(calculate_rsi).add_prefix("RSI_")
+    pct   = close_df.pct_change().add_prefix("PctChg_")
+    nextc = close_df.shift(-1).add_prefix("NextClose_")
+
+    # 5) Combine into one DataFrame
+    df = pd.concat([raw, sma20, sma50, rsi, pct, nextc], axis=1)
+
+    # 6) Drop initial NaNs (so indicators are valid), keep last row for prediction
+    indicator_cols = sma20.columns.tolist() + sma50.columns.tolist() + rsi.columns.tolist() + pct.columns.tolist()
+    df.dropna(subset=indicator_cols, inplace=True)
+
+    gains = {}
+
+    # 7) Loop through tickers
+    for ticker in tickers:
+        feat_cols = [
+            f"Open_{ticker}", f"High_{ticker}", f"Low_{ticker}", f"Volume_{ticker}",
+            f"SMA20_{ticker}", f"SMA50_{ticker}", f"RSI_{ticker}", f"PctChg_{ticker}"
+        ]
+        target_col = f"NextClose_{ticker}"
+
+        X = df[feat_cols]
+        Y = df[target_col]
+
+        # hold out the very last row for prediction
+        X_train, Y_train = X.iloc[:-1], Y.iloc[:-1]
+        X_pred = X.iloc[[-1]]
+
+        # train model
+        model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=0)
+        model.fit(X_train, Y_train)
+
+        # predict next close
+        pred_close = model.predict(X_pred)[0]
+        today_open = raw[f"Open_{ticker}"].iloc[-1]
+
+        gains[ticker] = pred_close - today_open
+
+    # 8) Find ticker with max expected gain
+    best = max(gains, key=gains.get)
+    best_gain = gains[best]
+
+    # 9) Compute next trading day for reference
+    last_date = df.index[-1]
+    next_bday = last_date + BDay(1)
+
+    print(f"Ticker with highest expected gain on {next_bday.date()}: {best} (Δ = ${best_gain:.2f})")
+    return best, best_gain
+
+if __name__ == "__main__":
+    tickers    = ['AAPL', 'MSFT', 'GOOG', 'TSLA', 'AMZN']
+    start_date = '2020-01-01'
+    find_highest_expected_gain(tickers, start_date)
