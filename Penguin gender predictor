@@ -1,0 +1,105 @@
+# My first machine learning model 
+# This machine learning model can tell the sex of penguins based on different features from their body
+
+import pandas as pd
+import ssl
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report
+
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# Load the data
+df = pd.read_csv("https://github.com/dataprofessor/data/raw/master/penguins_cleaned.csv")
+
+# Check the data 
+print("Dataset shape:", df.shape)
+print("\nFirst few rows:")
+print(df.head())
+print("\nSex column unique values:", df["sex"].unique())
+
+# Data separation as X and Y
+Y = df["sex"]
+X = df.drop("sex", axis=1)
+
+# Handle categorical variables (convert to numerical)
+X = pd.get_dummies(X, drop_first=True)
+
+# Data splitting
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=100)
+
+# Model Building - Using Logistic Regression for classification (not Linear Regression)
+lr = LogisticRegression(max_iter=1000)  # Increased max_iter to avoid convergence warnings
+lr.fit(X_train, Y_train)
+
+# Applying the Model to make predictions
+Y_lr_train_pred = lr.predict(X_train)
+Y_lr_test_pred = lr.predict(X_test)
+
+print("Training Predictions:")
+print(Y_lr_train_pred)
+print("\nTest Predictions:")
+print(Y_lr_test_pred)
+
+# Evaluate model performance
+train_accuracy = accuracy_score(Y_train, Y_lr_train_pred)
+test_accuracy = accuracy_score(Y_test, Y_lr_test_pred)
+
+print(f"\nTraining Accuracy: {train_accuracy:.3f}")
+print(f"Test Accuracy: {test_accuracy:.3f}")
+
+print("\nDetailed Classification Report:")
+print(classification_report(Y_test, Y_lr_test_pred))
+
+# Correct results summary for classification
+results_df = pd.DataFrame({
+    "Model": ["Logistic Regression"],
+    "Train Accuracy": [train_accuracy],
+    "Test Accuracy": [test_accuracy]
+})
+
+print("\nModel Results Summary:")
+print(results_df)
+
+# Now let's predict new penguins!
+print("\n" + "="*50)
+print("PREDICT NEW PENGUINS!")
+print("="*50)
+
+# Example new penguin data
+new_penguins = pd.DataFrame({
+    'species': ['Adelie', 'Chinstrap', 'Gentoo'],
+    'island': ['Torgersen', 'Dream', 'Biscoe'],
+    'bill_length_mm': [39.5, 48.1, 55.9],
+    'bill_depth_mm': [17.8, 18.5, 17.0],
+    'flipper_length_mm': [186, 195, 230],
+    'body_mass_g': [3800, 4000, 5700]
+})
+
+print("New penguin data:")
+print(new_penguins)
+
+# Convert categorical variables the same way as training data
+new_penguins_encoded = pd.get_dummies(new_penguins, drop_first=True)
+
+# Make sure columns match training data
+missing_cols = set(X.columns) - set(new_penguins_encoded.columns)
+for col in missing_cols:
+    new_penguins_encoded[col] = 0
+
+# Reorder columns to match training data
+new_penguins_encoded = new_penguins_encoded[X.columns]
+
+# Make predictions
+predictions = lr.predict(new_penguins_encoded)
+probabilities = lr.predict_proba(new_penguins_encoded)
+
+print(f"\nPredictions:")
+for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
+    confidence = max(prob) * 100
+    print(f"Penguin {i+1}: {pred} (confidence: {confidence:.1f}%)")
+
+print("\n" + "="*50)
+print("Want to predict your own penguin?")
+print("Just change the values in 'new_penguins' above!")
+print("="*50)
